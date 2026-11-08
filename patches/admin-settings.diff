@@ -1,0 +1,71 @@
+diff --git a/src/config/index.ts b/src/config/index.ts
+--- a/src/config/index.ts
++++ b/src/config/index.ts
+@@ -73,6 +73,10 @@ export const envConfigs: Record<string, string> = {
+   // AI
+   replicate_api_token: procEnv.REPLICATE_API_TOKEN ?? '',
+ 
++  // Cloudflare Turnstile (admin settings win; these are env fallbacks)
++  turnstile_site_key: publicEnv('VITE_TURNSTILE_SITE_KEY') ?? '',
++  turnstile_secret_key: procEnv.TURNSTILE_SECRET_KEY ?? '',
++
+   // Locale (public)
+   locale: publicEnv('VITE_DEFAULT_LOCALE') ?? 'en',
+ };
+diff --git a/src/modules/config/settings.ts b/src/modules/config/settings.ts
+--- a/src/modules/config/settings.ts
++++ b/src/modules/config/settings.ts
+@@ -47,11 +47,13 @@ export function getSettingGroups(): SettingGroup[] {
+     { name: 'appinfo', title: 'App Info', description: 'Basic application settings', tab: 'general' },
+     { name: 'user_role', title: 'User Roles', description: 'Default role for new users', tab: 'general' },
+     { name: 'credit', title: 'Credits', description: 'Initial credits for new users', tab: 'general' },
++    { name: 'anti_abuse', title: 'Anti-abuse', description: 'Free-credit limits for visitors and new accounts', tab: 'general' },
+ 
+     // Auth
+     { name: 'email_auth', title: 'Email Auth', description: 'Email/password authentication', tab: 'auth' },
+     { name: 'google_auth', title: 'Google Auth', description: 'Google OAuth login', tab: 'auth' },
+     { name: 'github_auth', title: 'GitHub Auth', description: 'GitHub OAuth login', tab: 'auth' },
++    { name: 'turnstile', title: 'Cloudflare Turnstile', description: 'Bot check on sign-up, login, OTP and free submissions', tab: 'auth' },
+ 
+     // Payment
+     { name: 'basic_payment', title: 'Basic', description: 'Payment general settings', tab: 'payment' },
+@@ -95,6 +97,15 @@ export function getSettings(): Setting[] {
+     { name: 'initial_credits_valid_days', title: 'Valid days', type: 'number', placeholder: '365', group: 'credit', tab: 'general' },
+     { name: 'initial_credits_description', title: 'Description', type: 'text', placeholder: 'Welcome bonus', group: 'credit', tab: 'general' },
+ 
++    // ─── General / Anti-abuse (src/modules/anti-abuse) ───────────────
++    { name: 'abuse_guest_credits', title: 'Guest credits', type: 'number', placeholder: '10', group: 'anti_abuse', tab: 'general', tip: 'Base free credits for an anonymous visitor. Keep it small.' },
++    { name: 'abuse_guest_credits_valid_days', title: 'Guest credits valid days', type: 'number', placeholder: '30', group: 'anti_abuse', tab: 'general', tip: '0 = never expire.' },
++    { name: 'abuse_min_credits', title: 'Minimum grant', type: 'number', placeholder: '1', group: 'anti_abuse', tab: 'general', tip: 'Floor for repeat grants from a known device / ip.' },
++    { name: 'abuse_max_repeat_grants', title: 'Max repeat grants', type: 'number', placeholder: '3', group: 'anti_abuse', tab: 'general', tip: 'After this many matched grants a device / ip gets nothing.' },
++    { name: 'abuse_decay_step', title: 'Decay per repeat', type: 'number', placeholder: '1', group: 'anti_abuse', tab: 'general', tip: 'Credits subtracted from the base for each prior grant from the same device / ip.' },
++    { name: 'abuse_no_bonus_countries', title: 'No-bonus countries', type: 'text', placeholder: 'IN', group: 'anti_abuse', tab: 'general', tip: 'Comma-separated ISO codes that never receive free credits.' },
++    { name: 'abuse_allowed_email_domains', title: 'Allowed sign-up email domains', type: 'text', placeholder: 'gmail.com, googlemail.com', group: 'anti_abuse', tab: 'general', tip: 'Comma-separated whitelist for email/password sign-up. Empty = any domain.' },
++
+     // ─── Auth / Email ────────────────────────────────────────────────
+     { name: 'email_auth_enabled', title: 'Enable email auth', type: 'switch', group: 'email_auth', tab: 'auth', defaultValue: 'true' },
+     { name: 'email_verification_enabled', title: 'Require email verification on sign up', type: 'switch', group: 'email_auth', tab: 'auth', defaultValue: 'false' },
+@@ -111,6 +122,11 @@ export function getSettings(): Setting[] {
+     { name: 'github_client_id', title: 'Client ID', type: 'text', placeholder: 'Ov23xxx', group: 'github_auth', tab: 'auth' },
+     { name: 'github_client_secret', title: 'Client Secret', type: 'password', placeholder: 'xxx', group: 'github_auth', tab: 'auth' },
+ 
++    // ─── Auth / Turnstile (src/lib/turnstile.ts) ─────────────────────
++    { name: 'turnstile_enabled', title: 'Enable Turnstile', type: 'switch', group: 'turnstile', tab: 'auth', defaultValue: 'false' },
++    { name: 'turnstile_site_key', title: 'Site Key', type: 'text', placeholder: '0x4AAAAAAA...', group: 'turnstile', tab: 'auth', tip: 'Public; rendered by the widget.' },
++    { name: 'turnstile_secret_key', title: 'Secret Key', type: 'password', placeholder: '0x4AAAAAAA...', group: 'turnstile', tab: 'auth' },
++
+     // ─── Payment / Basic ─────────────────────────────────────────────
+     { name: 'select_payment_enabled', title: 'Show payment method selector', type: 'switch', group: 'basic_payment', tab: 'payment' },
+     {
+diff --git a/src/routes/api/config/public.ts b/src/routes/api/config/public.ts
+--- a/src/routes/api/config/public.ts
++++ b/src/routes/api/config/public.ts
+@@ -8,6 +8,8 @@ const publicKeys = [
+   'google_one_tap_enabled',
+   'google_client_id',
+   'github_auth_enabled',
++  'turnstile_enabled',
++  'turnstile_site_key',
+   'invite_code_required',
+   'select_payment_enabled',
+   'default_payment_provider',

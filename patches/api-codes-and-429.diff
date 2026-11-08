@@ -1,0 +1,44 @@
+diff --git a/src/lib/api-client.ts b/src/lib/api-client.ts
+--- a/src/lib/api-client.ts
++++ b/src/lib/api-client.ts
+@@ -26,6 +26,15 @@ export const API_CODE_DURATION_LIMIT_EXCEEDED = -3;
+ // request). Same upgrade-dialog treatment, with batch-specific copy.
+ export const API_CODE_BATCH_LIMIT_EXCEEDED = -4;
+ 
++// Anti-abuse envelope codes (src/modules/anti-abuse). Not emitted by any
++// route yet; reserved so the client can branch on them once wired.
++// Too many requests for this ip / email / anon id; data.retryAfterSeconds.
++export const API_CODE_RATE_LIMITED = -5;
++// Turnstile token missing or rejected; the client should re-render the widget.
++export const API_CODE_CAPTCHA_FAILED = -6;
++// Visitor / free-user credit balance is empty.
++export const API_CODE_QUOTA_EXHAUSTED = -7;
++
+ export interface PageResult<T> {
+   items: T[];
+   total: number;
+diff --git a/src/lib/resp.ts b/src/lib/resp.ts
+--- a/src/lib/resp.ts
++++ b/src/lib/resp.ts
+@@ -1,3 +1,5 @@
++import { API_CODE_RATE_LIMITED } from './api-client';
++
+ export function respData<T = any>(data: T) {
+   return respJson(0, 'ok', data || []);
+ }
+@@ -14,6 +16,15 @@ export function respPage(items: any[], total: number) {
+   return respJson(0, 'ok', { items, total });
+ }
+ 
++/** 429 envelope for the anti-abuse rate limiter; carries Retry-After. */
++export function respRateLimited(message: string, retryAfterSeconds: number) {
++  const seconds = Math.max(1, Math.ceil(retryAfterSeconds));
++  return Response.json(
++    { code: API_CODE_RATE_LIMITED, message, data: { retryAfterSeconds: seconds } },
++    { status: 429, headers: { 'cache-control': 'no-store', 'retry-after': String(seconds) } }
++  );
++}
++
+ export function respJson(code: number, message: string, data?: any) {
+   let json: Record<string, any> = {
+     code: code,
